@@ -21,9 +21,9 @@ use crate::{
         PermissionModeOptions, Replay, Seq, SessionAttach, SessionAttachParams,
         SessionDetachedParams, SessionEvent, SessionEventEnvelope, SessionEventParams, SessionId,
         SessionOptions, StreamId, AUTH_LOGIN_FINISHED, AUTH_LOGIN_PROMPT, CONFIG_CHANGED,
-        DAEMON_STATUS, DAEMON_STOP, MODEL_CHANGED, MODEL_LIST, SESSION_ANSWER,
-        SESSION_ANSWER_QUESTION, SESSION_DETACHED, SESSION_EVENT, SESSION_FORK, SESSION_HOLD,
-        SESSION_LIST, SESSION_NEW, SESSION_PROMPT,
+        CONFIG_TABLE_GET, CONFIG_TABLE_SET, DAEMON_STATUS, DAEMON_STOP, MODEL_CHANGED, MODEL_LIST,
+        SESSION_ANSWER, SESSION_ANSWER_QUESTION, SESSION_DETACHED, SESSION_EVENT, SESSION_FORK,
+        SESSION_HOLD, SESSION_LIST, SESSION_NEW, SESSION_PROMPT,
     },
     subscription, Client, ClientRole, ConfigChangedParams, ConfigGetParams, ConfigGetResponse,
     ConfigNamespace, ConfigRevision, ConfigWatch, CredentialStoreKind, CredentialStoreStatus,
@@ -426,6 +426,23 @@ async fn dispatch_enforces_the_handshake_and_rejects_unknown_requests() {
                 (id(2), Err(Some(ErrorCode::CapabilityRequired))),
                 (id(3), Err(Some(ErrorCode::CapabilityRequired))),
                 (id(4), Ok(())),
+            ],
+        ),
+        (
+            "an agent's connection may read a config table but not write one",
+            vec![
+                hello_as(1, PROTOCOL_VERSION, "agent", &[]),
+                request_with_params(
+                    2,
+                    CONFIG_TABLE_SET,
+                    serde_json::json!({"table": "providers", "revision": "absent", "changes": []}),
+                ),
+                request_with_params(3, CONFIG_TABLE_GET, serde_json::json!({"table": "providers"})),
+            ],
+            vec![
+                (id(1), Ok(())),
+                (id(2), Err(Some(ErrorCode::CapabilityRequired))),
+                (id(3), Err(Some(ErrorCode::MethodNotFound))),
             ],
         ),
         (
@@ -1527,8 +1544,9 @@ fn config_get_line(id: i64) -> String {
 
 // Covers: `rho/config/get` answers, then sends `rho/config/changed` with
 // every entry that changed since the last notification, even when two
-// states were published before the forwarder ran; reading the namespace
-// again replaces the forwarder instead of adding a second one.
+// states were published before the forwarder ran, and with none when only
+// the revision moved; reading the namespace again replaces the forwarder
+// instead of adding a second one.
 // Owner: protocol server config forwarding.
 #[tokio::test]
 async fn config_get_answers_then_forwards_every_changed_entry() {
@@ -1570,6 +1588,10 @@ async fn config_get_answers_then_forwards_every_changed_entry() {
         .state
         .send_replace(config_state("r3", &[("a", false), ("b", true)]));
     assert_eq!(peer.take(1).await, [changed("r3", &[("a", false)])]);
+    service
+        .state
+        .send_replace(config_state("r4", &[("a", false), ("b", true)]));
+    assert_eq!(peer.take(1).await, [changed("r4", &[])]);
     peer.close_input().await;
     assert_eq!(peer.remaining().await, []);
 }

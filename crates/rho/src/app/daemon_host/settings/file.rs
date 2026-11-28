@@ -65,6 +65,15 @@ pub(super) fn read(path: &Path) -> Result<ConfigDocument, ReadError> {
     }
 }
 
+/// The document at `path`, as a request reads it: a file that is not valid
+/// TOML is `ConfigInvalid`.
+pub(super) fn read_document(path: &Path) -> Result<ConfigDocument, RpcError> {
+    read(path).map_err(|error| match error {
+        ReadError::Parse(_) => RpcError::new(ErrorCode::ConfigInvalid, error.message(path)),
+        ReadError::Io(_) => RpcError::new(ErrorCode::InternalError, error.message(path)),
+    })
+}
+
 /// A settings file open for a change, under its edit lock, which every
 /// writer of the file outside the daemon takes too: `rho login` recording a
 /// login, choosing a credential store, an agent edit. Nothing else writes
@@ -98,10 +107,7 @@ impl Edit {
                 )
             }
         })?;
-        let doc = read(path).map_err(|error| match error {
-            ReadError::Parse(_) => RpcError::new(ErrorCode::ConfigInvalid, error.message(path)),
-            ReadError::Io(_) => RpcError::new(ErrorCode::InternalError, error.message(path)),
-        })?;
+        let doc = read_document(path)?;
         Ok(Self {
             _lock: lock,
             path: path.to_owned(),

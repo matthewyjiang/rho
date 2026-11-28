@@ -10,17 +10,17 @@
 use std::collections::BTreeMap;
 
 use rho_protocol::{
-    ConfigCategory, ConfigSchema, ModelRuntime, ModelSelection, SettingChange, SettingEntry,
-    SettingKey, SettingKind, SettingSpec, SettingValue, ValueSource,
+    ConfigCategory, ConfigRevision, ConfigSchema, ModelRuntime, ModelSelection, SettingChange,
+    SettingEntry, SettingKey, SettingKind, SettingSpec, SettingValue, ValueSource,
 };
 use toml_edit::Value;
 
 use super::{
     document::{shown, ConfigDocument},
-    load,
+    entries, load,
     registry::AGENT_SETTINGS,
     setting::{save_settings, AnySetting, ConfigError},
-    Config, ConfigWarning,
+    ChangeError, Config, ConfigWarning,
 };
 
 /// The agent's settings pages, in display order. Every registry row names
@@ -76,15 +76,25 @@ pub(crate) fn agent_values(
         .collect()
 }
 
-/// Why agent changes were not applied; `doc` is left as it was.
-#[derive(Debug, PartialEq)]
-pub(crate) enum AgentChangeError {
-    /// A change a setting refuses, an unknown key, or a result that would
-    /// not load, such as a compaction target above its threshold.
-    Refused(Vec<ConfigError>),
-    /// The file does not load for keys the changes leave alone; a hand
-    /// edit must fix it.
-    FileInvalid(Vec<ConfigError>),
+/// The revision of the agent settings `doc` itself holds: every leaf a
+/// setting owns, with the TOML value it holds, before the loader resolves
+/// aliases or providers. So it moves when a key a settings write could
+/// change does, `values` or not, such as a model's `auth`; never for the
+/// tables `rho/config/table/set` writes, not even an alias that moves what
+/// an `@alias` model resolves to, nor for comments, formatting or key
+/// order.
+pub(crate) fn agent_revision(doc: &ConfigDocument) -> ConfigRevision {
+    let keys: BTreeMap<String, serde_json::Value> = doc
+        .leaf_paths()
+        .into_iter()
+        .filter(|path| AGENT_SETTINGS.iter().any(|setting| setting.owns(path)))
+        .filter_map(|path| {
+            let path: Vec<&str> = path.iter().map(String::as_str).collect();
+            let item = doc.get_at(&path)?;
+            Some((entries::dotted_key(&path), entries::to_json(item)))
+        })
+        .collect();
+    entries::revision(&keys)
 }
 
 /// Applies protocol `changes`, in order, to the agent settings `doc`
@@ -96,7 +106,7 @@ pub(crate) enum AgentChangeError {
 pub(crate) fn apply_agent_changes(
     doc: &mut ConfigDocument,
     changes: &[SettingChange],
-) -> Result<(Config, Vec<ConfigWarning>), AgentChangeError> {
+) -> Result<(Config, Vec<ConfigWarning>), ChangeError> {
     let mut changed = Vec::new();
     let mut errors = Vec::new();
     for change in changes {
@@ -116,7 +126,7 @@ pub(crate) fn apply_agent_changes(
         }
     }
     let mut edited = loadable_base(doc, &changed)?;
-    let (before, _) = load::resolve(&edited).map_err(AgentChangeError::FileInvalid)?;
+    let (before, _) = load::resolve(&edited).map_err(ChangeError::FileInvalid)?;
     let mut after = before.clone();
     for (setting, change) in &changed {
         let value = match change {
@@ -143,7 +153,7 @@ pub(crate) fn apply_agent_changes(
         ));
     }
     if !errors.is_empty() {
-        return Err(AgentChangeError::Refused(errors));
+        return Err(ChangeError::Refused(errors));
     }
     // Setters reach past their own setting, such as a model change moving
     // its auth, so every setting that differs is saved; internal agents
@@ -155,7 +165,7 @@ pub(crate) fn apply_agent_changes(
             SettingChange::Reset { .. } => setting.remove(&mut edited),
         }
     }
-    let resolved = load::resolve(&edited).map_err(AgentChangeError::Refused)?;
+    let resolved = load::resolve(&edited).map_err(ChangeError::Refused)?;
     *doc = edited;
     Ok(resolved)
 }
@@ -165,7 +175,7 @@ pub(crate) fn apply_agent_changes(
 fn loadable_base(
     doc: &ConfigDocument,
     changed: &[(&dyn AnySetting<Config>, &SettingChange)],
-) -> Result<ConfigDocument, AgentChangeError> {
+) -> Result<ConfigDocument, ChangeError> {
     let Err(errors) = load::resolve(doc) else {
         return Ok(doc.clone());
     };
@@ -179,7 +189,7 @@ fn loadable_base(
     let mut base = doc.clone();
     for error in &errors {
         let Some(setting) = replaced(error) else {
-            return Err(AgentChangeError::FileInvalid(errors));
+            return Err(ChangeError::FileInvalid(errors));
         };
         setting.remove(&mut base);
     }

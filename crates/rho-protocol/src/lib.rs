@@ -207,6 +207,10 @@ pub use methods::{
     SESSION_REPORT,
 };
 pub use methods::{
+    ConfigTable, ConfigTableGetParams, ConfigTableGetResponse, ConfigTableSetParams,
+    ConfigTableSetResponse, TableChange, TableEntry, CONFIG_TABLE_GET, CONFIG_TABLE_SET,
+};
+pub use methods::{
     ConfiguredMcpServer, McpListParams, McpListResponse, McpServerSource, McpTransport, MCP_LIST,
 };
 pub use methods::{

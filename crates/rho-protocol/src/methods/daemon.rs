@@ -61,7 +61,9 @@ pub enum ClientCapability {
     /// Answer a session's open requests, its approvals and questions, and
     /// hold their timeouts: [`super::SESSION_ANSWER`] and
     /// [`super::SESSION_HOLD`]. Acting on a surface it shows needs it too:
-    /// [`super::SESSION_SURFACE_ACTION`].
+    /// [`super::SESSION_SURFACE_ACTION`], and so does writing a config
+    /// table, which can send a provider's saved key to a new `base_url`:
+    /// [`super::CONFIG_TABLE_SET`].
     Answer,
 }
 

@@ -327,8 +327,9 @@ pub struct ConfigSchema {
     /// The pages settings sit on, in display order.
     pub categories: Vec<ConfigCategory>,
     pub settings: Vec<SettingSpec>,
-    /// Structured tables `config.toml` holds that only a hand edit
-    /// changes, such as provider profiles.
+    /// Structured tables `config.toml` holds that no setting changes, such
+    /// as provider profiles. A hand edit changes them, and
+    /// [`super::CONFIG_TABLE_SET`] those it names in [`super::ConfigTable`].
     pub file_only: Vec<FileOnlyTable>,
 }
 
@@ -339,7 +340,7 @@ pub struct ConfigCategory {
     pub label: String,
 }
 
-/// A table of `config.toml` the protocol does not edit.
+/// A table of `config.toml` no setting edits.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct FileOnlyTable {
     /// Its dotted key, such as `providers`.

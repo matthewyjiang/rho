@@ -9,7 +9,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::{
-    methods::{HELLO, SESSION_ANSWER, SESSION_HOLD, SESSION_SURFACE_ACTION},
+    methods::{CONFIG_TABLE_SET, HELLO, SESSION_ANSWER, SESSION_HOLD, SESSION_SURFACE_ACTION},
     ClientCapability, ClientInfo, ClientRole, ErrorCode, HelloParams, ProtocolVersion, RpcError,
     SessionSetup, Surfaces,
 };
@@ -116,18 +116,27 @@ fn may_declare(role: ClientRole, capability: ClientCapability) -> bool {
 /// The capability `method` needs, if it needs one. A new method that acts
 /// for a person, as an answer does, belongs here.
 ///
-/// Answering, holding and acting on a surface are the only gated methods,
-/// on purpose. `rho/session/answer_question` needs none: an agent's session
-/// answers through it a question asked by a session it started, never an
-/// approval, and the daemon checks that against its job records. An agent
-/// connection may change settings (`rho/config/set` and the other settings
-/// methods) and reconfigure a session (`rho/session/configure`): agents
-/// legitimately tune the sessions they run, and a role is declared, not
-/// authenticated, so gating them would stop no process that meant to call
-/// them. Custom per-method permissions may come after the beta (#1810).
+/// Answering, holding and acting on a surface are gated, and so is writing
+/// a config table. `rho/session/answer_question` needs none: an agent's
+/// session answers through it a question asked by a session it started,
+/// never an approval, and the daemon checks that against its job records.
+///
+/// `rho/config/table/set` is gated because a put can point a provider
+/// profile's `base_url` somewhere new while the provider's saved key stays,
+/// and the next session sends that key there. A model driving session
+/// control must not be able to do that; reading the tables stays open.
+///
+/// An agent connection may still change settings (`rho/config/set` and the
+/// other settings methods) and reconfigure a session
+/// (`rho/session/configure`): agents legitimately tune the sessions they
+/// run. A role is declared, not authenticated, so a gate keeps a client to
+/// its part; it stops no process that opens the socket itself. Custom
+/// per-method permissions may come after the beta (#1810).
 fn needed_by(method: &str) -> Option<ClientCapability> {
     match method {
-        SESSION_ANSWER | SESSION_HOLD | SESSION_SURFACE_ACTION => Some(ClientCapability::Answer),
+        SESSION_ANSWER | SESSION_HOLD | SESSION_SURFACE_ACTION | CONFIG_TABLE_SET => {
+            Some(ClientCapability::Answer)
+        }
         _ => None,
     }
 }

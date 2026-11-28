@@ -36,6 +36,14 @@ pub use internal_agent::{
 mod document;
 pub(crate) use document::ConfigDocument;
 
+#[path = "config_entries.rs"]
+pub(crate) mod entries;
+
+#[path = "config_tables.rs"]
+mod tables;
+pub(crate) use entries::ChangeError;
+pub(crate) use tables::{apply_table_changes, read_table, table_revision, EditableTable};
+
 #[path = "config_setting.rs"]
 mod setting;
 pub(crate) use setting::{
@@ -51,8 +59,8 @@ mod wire;
 #[cfg(test)]
 pub(crate) use wire::default_fits_kind;
 pub(crate) use wire::{
-    agent_schema, agent_values, apply_agent_changes, client_specs_problem, spec_values,
-    write_changes, AgentChangeError,
+    agent_revision, agent_schema, agent_values, apply_agent_changes, client_specs_problem,
+    spec_values, write_changes,
 };
 
 #[path = "config_migrate_2x.rs"]

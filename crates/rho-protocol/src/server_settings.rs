@@ -13,11 +13,13 @@ use crate::{
     forward::{ConfigWatch, Forwarders, ModelWatch},
     methods::{
         ConfigGet, ConfigGetParams, ConfigRegisterParams, ConfigRegisterResponse, ConfigSchema,
-        ConfigSetParams, ConfigSetResponse, HooksFileGetParams, HooksFileGetResponse,
+        ConfigSetParams, ConfigSetResponse, ConfigTableGetParams, ConfigTableGetResponse,
+        ConfigTableSetParams, ConfigTableSetResponse, HooksFileGetParams, HooksFileGetResponse,
         HooksFileSetParams, HooksFileSetResponse, HooksListParams, HooksListResponse,
         McpListParams, McpListResponse, ModelListMethod, ModelListParams, ModelRefreshParams,
         ModelRefreshResponse, CONFIG_GET, CONFIG_REGISTER, CONFIG_SCHEMA, CONFIG_SET,
-        HOOKS_FILE_GET, HOOKS_FILE_SET, HOOKS_LIST, MCP_LIST, MODEL_LIST, MODEL_REFRESH,
+        CONFIG_TABLE_GET, CONFIG_TABLE_SET, HOOKS_FILE_GET, HOOKS_FILE_SET, HOOKS_LIST, MCP_LIST,
+        MODEL_LIST, MODEL_REFRESH,
     },
     methods::{
         PluginsInstallParams, PluginsInstallResponse, PluginsListParams, PluginsListResponse,
@@ -72,6 +74,27 @@ pub trait SettingsService: Send + Sync {
     ) -> impl Future<Output = Result<ConfigSetResponse, RpcError>> + Send {
         let _ = params;
         unsupported(CONFIG_SET)
+    }
+
+    /// Answers `rho/config/table/get`: one structured table's entries, with
+    /// its revision.
+    fn get_config_table(
+        &self,
+        params: ConfigTableGetParams,
+    ) -> impl Future<Output = Result<ConfigTableGetResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(CONFIG_TABLE_GET)
+    }
+
+    /// Handles `rho/config/table/set`: put or remove every entry, or none,
+    /// and publish the agent namespace's new state when a setting's value
+    /// moved.
+    fn set_config_table(
+        &self,
+        params: ConfigTableSetParams,
+    ) -> impl Future<Output = Result<ConfigTableSetResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(CONFIG_TABLE_SET)
     }
 
     /// Handles `rho/model/list`: the models the client may pick, current

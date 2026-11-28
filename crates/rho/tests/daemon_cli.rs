@@ -90,6 +90,8 @@ mod mcp;
 
 #[path = "support/daemon_config.rs"]
 mod config;
+#[path = "support/daemon_config_tables.rs"]
+mod config_tables;
 #[path = "support/daemon_configured.rs"]
 mod configured;
 #[path = "support/daemon_hooks_file.rs"]

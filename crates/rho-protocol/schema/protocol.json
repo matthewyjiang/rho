@@ -948,7 +948,7 @@
       "oneOf": [
         {
           "const": "answer",
-          "description": "Answer a session's open requests, its approvals and questions, and\nhold their timeouts: [`super::SESSION_ANSWER`] and\n[`super::SESSION_HOLD`]. Acting on a surface it shows needs it too:\n[`super::SESSION_SURFACE_ACTION`].",
+          "description": "Answer a session's open requests, its approvals and questions, and\nhold their timeouts: [`super::SESSION_ANSWER`] and\n[`super::SESSION_HOLD`]. Acting on a surface it shows needs it too:\n[`super::SESSION_SURFACE_ACTION`], and so does writing a config\ntable, which can send a provider's saved key to a new `base_url`:\n[`super::CONFIG_TABLE_SET`].",
           "type": "string"
         }
       ]
@@ -1878,7 +1878,7 @@
           "type": "array"
         },
         "file_only": {
-          "description": "Structured tables `config.toml` holds that only a hand edit\nchanges, such as provider profiles.",
+          "description": "Structured tables `config.toml` holds that no setting changes, such\nas provider profiles. A hand edit changes them, and\n[`super::CONFIG_TABLE_SET`] those it names in [`super::ConfigTable`].",
           "items": {
             "$ref": "#/$defs/FileOnlyTable"
           },
@@ -1948,6 +1948,102 @@
         "revision": {
           "$ref": "#/$defs/ConfigRevision",
           "description": "The namespace's revision with the changes."
+        }
+      },
+      "required": [
+        "revision"
+      ],
+      "type": "object"
+    },
+    "ConfigTable": {
+      "anyOf": [
+        {
+          "const": "providers",
+          "description": "Provider profiles: `ollama` for `[providers.ollama]`, or a custom\nprovider's name for its `[providers.custom.<name>]`.",
+          "type": "string"
+        },
+        {
+          "const": "model.aliases",
+          "description": "`[model.aliases]`, by alias name; each value is the alias's target,\nsuch as `\"openai/gpt-5-mini\"`.",
+          "type": "string"
+        },
+        {
+          "const": "model.favorite_models",
+          "description": "`model.favorite_models`, by model reference, in the file's order;\neach value is `null`.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "A table of `config.toml` that [`CONFIG_TABLE_GET`] and\n[`CONFIG_TABLE_SET`] edit, spelled as its [`super::FileOnlyTable::key`]."
+    },
+    "ConfigTableGetParams": {
+      "description": "Params of [`CONFIG_TABLE_GET`].",
+      "properties": {
+        "table": {
+          "$ref": "#/$defs/ConfigTable"
+        }
+      },
+      "required": [
+        "table"
+      ],
+      "type": "object"
+    },
+    "ConfigTableGetResponse": {
+      "description": "Result of [`CONFIG_TABLE_GET`].",
+      "properties": {
+        "entries": {
+          "description": "Provider profiles and aliases by key; favorites in the file's\norder.",
+          "items": {
+            "$ref": "#/$defs/TableEntry"
+          },
+          "type": "array"
+        },
+        "revision": {
+          "$ref": "#/$defs/ConfigRevision",
+          "description": "Send it with the next [`CONFIG_TABLE_SET`] of this table. It is the\ntable's own: [`super::CONFIG_GET`]'s revision does not cover it."
+        }
+      },
+      "required": [
+        "revision",
+        "entries"
+      ],
+      "type": "object"
+    },
+    "ConfigTableSetParams": {
+      "description": "Params of [`CONFIG_TABLE_SET`]. Every change lands, or none does: the\nwhole file must still load with them, and a change the daemon refuses\nleaves the file as it was.",
+      "properties": {
+        "changes": {
+          "description": "Applied in order.",
+          "items": {
+            "$ref": "#/$defs/TableChange"
+          },
+          "type": "array"
+        },
+        "revision": {
+          "$ref": "#/$defs/ConfigRevision",
+          "description": "The table's revision the changes were made against. A stale one is\nrefused with [`crate::ErrorCode::ConfigConflict`]."
+        },
+        "table": {
+          "$ref": "#/$defs/ConfigTable"
+        }
+      },
+      "required": [
+        "table",
+        "revision",
+        "changes"
+      ],
+      "type": "object"
+    },
+    "ConfigTableSetResponse": {
+      "description": "Result of [`CONFIG_TABLE_SET`].",
+      "properties": {
+        "revision": {
+          "$ref": "#/$defs/ConfigRevision",
+          "description": "The table's revision with the changes."
         }
       },
       "required": [
@@ -2713,7 +2809,7 @@
       "type": "object"
     },
     "FileOnlyTable": {
-      "description": "A table of `config.toml` the protocol does not edit.",
+      "description": "A table of `config.toml` no setting edits.",
       "properties": {
         "docs": {
           "description": "Where its format is documented.",
@@ -11602,6 +11698,63 @@
         }
       ]
     },
+    "TableChange": {
+      "description": "One change of a [`CONFIG_TABLE_SET`]. The daemon reads it, so it has no\n`Unknown`.",
+      "oneOf": [
+        {
+          "description": "Write `value` as the whole entry `key`, adding it when the table\nlacks it; a field `value` leaves out is removed. A new favorite is\nadded last, and one already there keeps its place.",
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "op": {
+              "const": "put",
+              "type": "string"
+            },
+            "value": true
+          },
+          "required": [
+            "op",
+            "key",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Remove the entry `key`, which the table must hold.",
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "op": {
+              "const": "remove",
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "key"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "TableEntry": {
+      "description": "One entry of a [`ConfigTable`].",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "value": {
+          "description": "The entry as `config.toml` holds it, as JSON: a table is an object."
+        }
+      },
+      "required": [
+        "key",
+        "value"
+      ],
+      "type": "object"
+    },
     "ToolBody": {
       "description": "Optional expandable body content.\n\nEvery variant except [`Self::Diff`] carries plain text lines; [`Self::Code`]\nand [`Self::Search`] add the metadata renderers need to highlight them.\n\nClosed: its variants carry their content under `lines`, which serde\ncannot read into a unit `Unknown`, so a new variant is a protocol major.",
       "oneOf": [
@@ -13063,6 +13216,22 @@
       },
       "result": {
         "$ref": "#/$defs/ConfigSetResponse"
+      }
+    },
+    "rho/config/table/get": {
+      "params": {
+        "$ref": "#/$defs/ConfigTableGetParams"
+      },
+      "result": {
+        "$ref": "#/$defs/ConfigTableGetResponse"
+      }
+    },
+    "rho/config/table/set": {
+      "params": {
+        "$ref": "#/$defs/ConfigTableSetParams"
+      },
+      "result": {
+        "$ref": "#/$defs/ConfigTableSetResponse"
       }
     },
     "rho/daemon/restart": {

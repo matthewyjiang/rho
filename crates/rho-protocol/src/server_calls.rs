@@ -10,36 +10,36 @@ use crate::{
         AuthChooseStore, AuthChooseStoreParams, AuthKey, AuthKeyParams, AuthList, AuthListParams,
         AuthLoginCancel, AuthLoginCancelParams, AuthLogout, AuthLogoutParams, ConfigRegister,
         ConfigRegisterParams, ConfigSchemaMethod, ConfigSchemaParams, ConfigSet, ConfigSetParams,
-        HooksFileGet, HooksFileGetParams, HooksFileSet, HooksFileSetParams, HooksList,
-        HooksListParams, JobList, JobListParams, McpList, McpListParams, ModelRefresh,
-        ModelRefreshParams, Restart, RestartParams, RestartResponse, SessionAnswer,
-        SessionAnswerParams, SessionAnswerQuestion, SessionAnswerQuestionParams,
-        SessionBackgroundList, SessionBackgroundListParams, SessionBackgroundStop,
-        SessionBackgroundStopParams, SessionCancel, SessionCancelParams, SessionConfigure,
-        SessionConfigureParams, SessionDelete, SessionDeleteParams, SessionFork, SessionForkParams,
-        SessionHold, SessionHoldParams, SessionHooksReload, SessionHooksReloadParams, SessionId,
-        SessionInspect, SessionInspectParams, SessionList, SessionListDetailed, SessionListParams,
-        SessionMarkMethod, SessionMarkParams, SessionMcp, SessionMcpCatalogParams,
-        SessionMcpCatalogRead, SessionMcpComplete, SessionMcpCompleteParams, SessionMcpParams,
-        SessionMcpResourceParams, SessionMcpResourceRead, SessionNew, SessionNewParams,
-        SessionProcesses, SessionProcessesParams, SessionPrompt, SessionPromptParams,
-        SessionPullRequestLink, SessionPullRequestLinkParams, SessionPullRequestList,
-        SessionPullRequestListParams, SessionPullRequestShow, SessionPullRequestShowParams,
-        SessionPullRequestUnlink, SessionPullRequestUnlinkParams, SessionRename,
-        SessionRenameParams, SessionReportParams, SessionReportRead, SessionSearch,
-        SessionSearchParams, SessionSteer, SessionSteerParams, SessionSurfaceAction,
-        SessionSurfaceActionParams, SessionUnsteer, SessionUnsteerParams, Status, Stop,
-        WorktreePrune, WorktreePruneParams, AUTH_CHOOSE_STORE, AUTH_KEY, AUTH_LIST,
-        AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_REGISTER, CONFIG_SCHEMA, CONFIG_SET, DAEMON_RESTART,
-        DAEMON_STATUS, DAEMON_STOP, HOOKS_FILE_GET, HOOKS_FILE_SET, HOOKS_LIST, JOB_LIST, MCP_LIST,
-        MODEL_REFRESH, SESSION_ANSWER, SESSION_ANSWER_QUESTION, SESSION_BACKGROUND_LIST,
-        SESSION_BACKGROUND_STOP, SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE, SESSION_FORK,
-        SESSION_HOLD, SESSION_HOOKS_RELOAD, SESSION_INSPECT, SESSION_LIST, SESSION_LIST_DETAILED,
-        SESSION_MARK, SESSION_MCP, SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE,
-        SESSION_NEW, SESSION_PROCESSES, SESSION_PROMPT, SESSION_PULL_REQUEST_LINK,
-        SESSION_PULL_REQUEST_LIST, SESSION_PULL_REQUEST_SHOW, SESSION_PULL_REQUEST_UNLINK,
-        SESSION_RENAME, SESSION_REPORT, SESSION_SEARCH, SESSION_STEER, SESSION_SURFACE_ACTION,
-        SESSION_UNSTEER, WORKTREE_PRUNE,
+        ConfigTableGet, ConfigTableGetParams, ConfigTableSet, ConfigTableSetParams, HooksFileGet,
+        HooksFileGetParams, HooksFileSet, HooksFileSetParams, HooksList, HooksListParams, JobList,
+        JobListParams, McpList, McpListParams, ModelRefresh, ModelRefreshParams, Restart,
+        RestartParams, RestartResponse, SessionAnswer, SessionAnswerParams, SessionAnswerQuestion,
+        SessionAnswerQuestionParams, SessionBackgroundList, SessionBackgroundListParams,
+        SessionBackgroundStop, SessionBackgroundStopParams, SessionCancel, SessionCancelParams,
+        SessionConfigure, SessionConfigureParams, SessionDelete, SessionDeleteParams, SessionFork,
+        SessionForkParams, SessionHold, SessionHoldParams, SessionHooksReload,
+        SessionHooksReloadParams, SessionId, SessionInspect, SessionInspectParams, SessionList,
+        SessionListDetailed, SessionListParams, SessionMarkMethod, SessionMarkParams, SessionMcp,
+        SessionMcpCatalogParams, SessionMcpCatalogRead, SessionMcpComplete,
+        SessionMcpCompleteParams, SessionMcpParams, SessionMcpResourceParams,
+        SessionMcpResourceRead, SessionNew, SessionNewParams, SessionProcesses,
+        SessionProcessesParams, SessionPrompt, SessionPromptParams, SessionPullRequestLink,
+        SessionPullRequestLinkParams, SessionPullRequestList, SessionPullRequestListParams,
+        SessionPullRequestShow, SessionPullRequestShowParams, SessionPullRequestUnlink,
+        SessionPullRequestUnlinkParams, SessionRename, SessionRenameParams, SessionReportParams,
+        SessionReportRead, SessionSearch, SessionSearchParams, SessionSteer, SessionSteerParams,
+        SessionSurfaceAction, SessionSurfaceActionParams, SessionUnsteer, SessionUnsteerParams,
+        Status, Stop, WorktreePrune, WorktreePruneParams, AUTH_CHOOSE_STORE, AUTH_KEY, AUTH_LIST,
+        AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_REGISTER, CONFIG_SCHEMA, CONFIG_SET,
+        CONFIG_TABLE_GET, CONFIG_TABLE_SET, DAEMON_RESTART, DAEMON_STATUS, DAEMON_STOP,
+        HOOKS_FILE_GET, HOOKS_FILE_SET, HOOKS_LIST, JOB_LIST, MCP_LIST, MODEL_REFRESH,
+        SESSION_ANSWER, SESSION_ANSWER_QUESTION, SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP,
+        SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE, SESSION_FORK, SESSION_HOLD,
+        SESSION_HOOKS_RELOAD, SESSION_INSPECT, SESSION_LIST, SESSION_LIST_DETAILED, SESSION_MARK,
+        SESSION_MCP, SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_NEW,
+        SESSION_PROCESSES, SESSION_PROMPT, SESSION_PULL_REQUEST_LINK, SESSION_PULL_REQUEST_LIST,
+        SESSION_PULL_REQUEST_SHOW, SESSION_PULL_REQUEST_UNLINK, SESSION_RENAME, SESSION_REPORT,
+        SESSION_SEARCH, SESSION_STEER, SESSION_SURFACE_ACTION, SESSION_UNSTEER, WORKTREE_PRUNE,
     },
     methods::{
         PluginsInstall, PluginsInstallParams, PluginsList, PluginsListParams, PluginsRemove,
@@ -107,6 +107,8 @@ pub(crate) enum ServiceCall {
     ConfigSchema,
     RegisterConfig(ConfigRegisterParams),
     SetConfig(ConfigSetParams),
+    GetConfigTable(ConfigTableGetParams),
+    SetConfigTable(ConfigTableSetParams),
     RefreshModels(ModelRefreshParams),
 }
 
@@ -201,6 +203,8 @@ impl ServiceCall {
                 .map(|ConfigSchemaParams {}| Self::ConfigSchema),
             CONFIG_REGISTER => decode_params::<ConfigRegister>(params).map(Self::RegisterConfig),
             CONFIG_SET => decode_params::<ConfigSet>(params).map(Self::SetConfig),
+            CONFIG_TABLE_GET => decode_params::<ConfigTableGet>(params).map(Self::GetConfigTable),
+            CONFIG_TABLE_SET => decode_params::<ConfigTableSet>(params).map(Self::SetConfigTable),
             MODEL_REFRESH => decode_params::<ModelRefresh>(params).map(Self::RefreshModels),
             method => Err(RpcError::new(
                 ErrorCode::MethodNotFound,
@@ -268,6 +272,8 @@ impl ServiceCall {
             | Self::ConfigSchema
             | Self::RegisterConfig(_)
             | Self::SetConfig(_)
+            | Self::GetConfigTable(_)
+            | Self::SetConfigTable(_)
             | Self::RefreshModels(_) => None,
         }
     }
@@ -431,6 +437,12 @@ impl ServiceCall {
             }
             Self::SetConfig(params) => {
                 encode_result::<ConfigSet>(&service.set_config(params).await?)
+            }
+            Self::GetConfigTable(params) => {
+                encode_result::<ConfigTableGet>(&service.get_config_table(params).await?)
+            }
+            Self::SetConfigTable(params) => {
+                encode_result::<ConfigTableSet>(&service.set_config_table(params).await?)
             }
             Self::RefreshModels(params) => {
                 encode_result::<ModelRefresh>(&service.refresh_models(params).await?)

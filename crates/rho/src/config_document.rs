@@ -49,10 +49,26 @@ impl ConfigDocument {
 
     /// The item at `key`, if the file sets it.
     pub(crate) fn get(&self, key: &str) -> Option<&Item> {
-        let mut segments = key.split('.');
-        let mut item = self.doc.as_table().get(segments.next()?)?;
-        for segment in segments {
+        self.get_at(&key.split('.').collect::<Vec<_>>())
+    }
+
+    /// The item at the key path `path`, whose segments may hold dots, if
+    /// the file sets it.
+    pub(crate) fn get_at(&self, path: &[&str]) -> Option<&Item> {
+        let (first, rest) = path.split_first()?;
+        let mut item = self.doc.as_table().get(first)?;
+        for segment in rest {
             item = item.as_table_like()?.get(segment)?;
+        }
+        (!item.is_none()).then_some(item)
+    }
+
+    /// [`Self::get_at`], to edit the item in place.
+    pub(crate) fn get_at_mut(&mut self, path: &[&str]) -> Option<&mut Item> {
+        let (first, rest) = path.split_first()?;
+        let mut item = self.doc.as_table_mut().get_mut(first)?;
+        for segment in rest {
+            item = item.as_table_like_mut()?.get_mut(segment)?;
         }
         (!item.is_none()).then_some(item)
     }
@@ -74,12 +90,20 @@ impl ConfigDocument {
     /// Writes a structured item at `key`, editing only the entries that
     /// differ so unchanged ones keep their comments. `None` removes it.
     pub(crate) fn set_item(&mut self, key: &str, new: Option<Item>) {
+        self.set_item_at(&key.split('.').collect::<Vec<_>>(), new);
+    }
+
+    /// [`Self::set_item`] at the key path `path`, whose segments may hold
+    /// dots.
+    pub(crate) fn set_item_at(&mut self, path: &[&str], new: Option<Item>) {
         let Some(new) = new else {
-            self.remove(key);
+            self.remove_at(path);
             return;
         };
-        let (parent, leaf) = split_key(key);
-        let table = self.table_mut(&parent);
+        let Some((&leaf, parent)) = path.split_last() else {
+            return;
+        };
+        let table = self.table_mut(parent);
         match table.get_mut(leaf) {
             Some(existing) => merge_item(existing, new),
             None => {
@@ -91,8 +115,13 @@ impl ConfigDocument {
     /// Removes `key` with its own comments, then any parent table the
     /// removal left empty, unless that table carries a comment.
     pub(crate) fn remove(&mut self, key: &str) {
-        let segments = key.split('.').collect::<Vec<_>>();
-        remove_path(self.doc.as_table_mut(), &segments);
+        self.remove_at(&key.split('.').collect::<Vec<_>>());
+    }
+
+    /// [`Self::remove`] at the key path `path`, whose segments may hold
+    /// dots.
+    pub(crate) fn remove_at(&mut self, path: &[&str]) {
+        remove_path(self.doc.as_table_mut(), path);
     }
 
     /// Every key path that holds a value or an array of tables, in file
@@ -149,10 +178,16 @@ pub(crate) fn decode_table<T: DeserializeOwned>(item: &Item) -> Result<T, String
 /// it: nested tables get their own `[header]` instead of `{ inline }` form,
 /// and a table holding only tables gets no header of its own.
 pub(crate) fn encode_table<T: Serialize>(value: &T) -> anyhow::Result<Item> {
-    let mut table = toml_edit::ser::to_document(value)?.into_table();
+    Ok(standard_table(
+        toml_edit::ser::to_document(value)?.into_table(),
+    ))
+}
+
+/// `table` as a person would write it, as [`encode_table`] writes one.
+pub(crate) fn standard_table(mut table: Table) -> Item {
     expand_inline_tables(&mut table);
     table.set_implicit(true);
-    Ok(Item::Table(table))
+    Item::Table(table)
 }
 
 /// The value as written, without surrounding whitespace or comments.

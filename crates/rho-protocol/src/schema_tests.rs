@@ -14,9 +14,9 @@ use crate::display::{
 use crate::methods::{
     AnswerStop, Applies, ApprovalSource, Ask, AuthKind, AuthStatus, BackgroundItem,
     BackgroundStatus, BranchLookup, Budget, CardTone, CommandKind, CompactionStatus,
-    CompactionTrigger, ConfigLayer, ConfigNamespace, ContentBlock, CredentialStoreKind,
-    DefaultStyle, DetachReason, ExcerptRole, InputAsker, IntegerUnit, JobKind, JobState,
-    LoginOutcome, ModelListKind, ModelRefreshOutcome, ModelRuntime, Operation, PathScope,
+    CompactionTrigger, ConfigLayer, ConfigNamespace, ConfigTable, ContentBlock,
+    CredentialStoreKind, DefaultStyle, DetachReason, ExcerptRole, InputAsker, IntegerUnit, JobKind,
+    JobState, LoginOutcome, ModelListKind, ModelRefreshOutcome, ModelRuntime, Operation, PathScope,
     PermissionMode, PlanStatus, ProcessState, ProcessStream, PromptAuthor, PullRequestCheckStatus,
     PullRequestLinkOrigin, PullRequestMergeMethod, PullRequestMergeable, PullRequestReview,
     PullRequestRollup, PullRequestState, PullRequestThreadState, PullRequestTrouble,
@@ -74,7 +74,7 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
     let unseen = || json!("from_a_newer_daemon");
     let unseen_tag = || json!({ "type": "from_a_newer_daemon" });
     let unseen_kind = || json!({ "kind": "from_a_newer_daemon" });
-    let cases: [(&str, bool); 108] = [
+    let cases: [(&str, bool); 109] = [
         ("ContextBasis", reads_as(unseen(), ContextBasis::Unknown)),
         (
             "PromptSourceKind",
@@ -353,6 +353,7 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
             "HooksFileStatus",
             reads_as(unseen_tag(), HooksFileStatus::Unknown),
         ),
+        ("ConfigTable", reads_as(unseen(), ConfigTable::Unknown)),
         ("PluginScope", reads_as(unseen(), PluginScope::Unknown)),
         (
             "PluginSource",
