@@ -67,7 +67,7 @@ hpke = { version = "0.15", default-features = false, features = ["alloc", "getra
 hex = "0.4"
 zeroize = { version = "1", features = ["derive"] }
 digest-io = "0.1"
-starlark = "=0.14.2"
+starlark = "=0.14.3"
 schemars = "1"
 base64 = "0.23"
 url = "2"
